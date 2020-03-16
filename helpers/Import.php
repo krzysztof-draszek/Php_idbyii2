@@ -40,7 +40,9 @@ use idbyii2\models\db\BusinessImport;
 use idbyii2\models\db\BusinessImportWorksheet;
 use idbyii2\models\form\NotificationsForm;
 use idbyii2\models\idb\IdbBankClientBusiness;
+use Throwable;
 use Yii;
+use yii\db\StaleObjectException;
 
 ################################################################################
 # Class(es)                                                                    #
@@ -57,29 +59,11 @@ class Import extends IdbImport
     const channelName = "importIDB";
 
     /**
-     * @param array $data
-     *
-     * @throws \Exception
-     */
-    private static function addTaskToQueue($data)
-    {
-        if (!empty($data)) {
-            $data = json_encode($data);
-            $idbRabbitMq = IdbRabbitMq::get();
-            $idbRabbitMq->produce(self::channelName, $data);
-        } else {
-            $msg = 'Import IDB - queue data cannot be empty!';
-            echo $msg . PHP_EOL;
-            throw new Exception($msg);
-        }
-    }
-
-    /**
      * @param $args
      *
      * @return void
-     * @throws \Throwable
-     * @throws \yii\db\StaleObjectException
+     * @throws Throwable
+     * @throws StaleObjectException
      */
     public static function remove($args)
     {
@@ -98,51 +82,6 @@ class Import extends IdbImport
 
             $file->delete();
         }
-    }
-
-    /**
-     * @param        $file
-     * @param array  $metadata
-     * @param        $businessUserId
-     * @param string $delimiter
-     * @param string $enclosure
-     * @param string $escape
-     *
-     * @return array
-     */
-    protected static function prepareMap(
-        $file,
-        array $metadata,
-        $businessUserId,
-        $delimiter = ";",
-        $enclosure = '"',
-        $escape = "\\"
-    ) {
-        $file = fopen($file, "r");
-        if (false === $file) {
-            return [];
-        }
-
-        $map = [];
-        $start = microtime(true);
-
-        $headers = fgets($file); //pomijamy headers
-        while (($row = fgets($file)) !== false) {
-            $row = str_getcsv($row, $delimiter, $enclosure, $escape);
-            $row = str_replace($escape . $enclosure, $enclosure, $row);
-            $tmp = [];
-
-            foreach ($metadata['headerMapping'] as $value) {
-                $tmp[$value['uuid']] = $row[$value['index']];
-            }
-
-            array_push($map, $tmp);
-        }
-        $end = microtime(true) - $start;
-        print_r("Map ready in $end seconds.\n");
-        fclose($file);
-
-        return $map;
     }
 
     /**
@@ -176,10 +115,10 @@ class Import extends IdbImport
      * @param       $targetDir
      * @param       $name
      * @param array $uuid
-     * @param bool  $isWizard
+     * @param bool $isWizard
      *
      * @return array
-     * @throws \Exception
+     * @throws Exception
      */
     public static function prepareRetrunFile($filepath, $targetDir, $name, $uuid = [], $isWizard = false)
     {
@@ -249,7 +188,8 @@ class Import extends IdbImport
         $delimiter = ";",
         $enclosure = '"',
         $escape = "\\"
-    ) {
+    )
+    {
         $file = $dir . $fileName . '_directory/' . $fileName . '.' . $worksheetId . '.' . $worksheetName;
 
         $file = fopen($file, "r");
@@ -268,7 +208,7 @@ class Import extends IdbImport
      * @param      $fileId
      * @param null $worksheetId
      *
-     * @throws \Exception
+     * @throws Exception
      */
     public static function executeImportsForDb($fileId, $worksheetId = null)
     {
@@ -285,9 +225,27 @@ class Import extends IdbImport
     }
 
     /**
+     * @param array $data
+     *
+     * @throws Exception
+     */
+    private static function addTaskToQueue($data)
+    {
+        if (!empty($data)) {
+            $data = json_encode($data);
+            $idbRabbitMq = IdbRabbitMq::get();
+            $idbRabbitMq->produce(self::channelName, $data);
+        } else {
+            $msg = 'Import IDB - queue data cannot be empty!';
+            echo $msg . PHP_EOL;
+            throw new Exception($msg);
+        }
+    }
+
+    /**
      * @param $data
      *
-     * @throws \Exception
+     * @throws Exception
      */
     public static function executeTaskFromImportQueue($data)
     {
@@ -331,62 +289,6 @@ class Import extends IdbImport
     }
 
     /**
-     * @param $languageDefault
-     * @param $import
-     *
-     * @return mixed
-     */
-    private static function setLanguageFromAttributes($languageDefault, $import)
-    {
-        $language = $languageDefault;
-        $importAttributes = $import->import_attributes;
-        if (!empty($importAttributes)) {
-            $importAttributes = json_decode($importAttributes, true);
-            if (!empty($importAttributes['language'])) {
-                $language = $importAttributes['language'];
-            }
-        }
-
-        return $language;
-    }
-
-    /**
-     * @param $import
-     *
-     * @return string|null
-     */
-    private static function setPhoneCodeFromAttributes($import)
-    {
-        $importAttributes = $import->import_attributes;
-        if (!empty($importAttributes)) {
-            $importAttributes = json_decode($importAttributes, true);
-            if (!empty($importAttributes['phone_code']) && $importAttributes['phone_code'] !== '0') {
-                return $importAttributes['phone_code'];
-            } else {
-                return null;
-            }
-        }
-    }
-
-    /**
-     * @param $import
-     *
-     * @return bool
-     */
-    private static function setBothValidFromAttributes($import)
-    {
-        $importAttributes = $import->import_attributes;
-        if (!empty($importAttributes)) {
-            $importAttributes = json_decode($importAttributes, true);
-            if (!empty($importAttributes['valid_both'])) {
-                return $importAttributes['valid_both'];
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * @param $fileId
      */
     public static function convertToWorksheets($fileId)
@@ -413,7 +315,7 @@ class Import extends IdbImport
                     }
 
                     $pieces = explode(".", $worksheet, 3);
-                    /** @var \idbyii2\models\db\BusinessImportWorksheet $model */
+                    /** @var BusinessImportWorksheet $model */
                     $model = new BusinessImportWorksheet();
                     $model->name = $pieces[2];
                     $model->worksheet_id = $pieces[1];
@@ -443,10 +345,30 @@ class Import extends IdbImport
     }
 
     /**
+     * @param $languageDefault
+     * @param $import
+     *
+     * @return mixed
+     */
+    private static function setLanguageFromAttributes($languageDefault, $import)
+    {
+        $language = $languageDefault;
+        $importAttributes = $import->import_attributes;
+        if (!empty($importAttributes)) {
+            $importAttributes = json_decode($importAttributes, true);
+            if (!empty($importAttributes['language'])) {
+                $language = $importAttributes['language'];
+            }
+        }
+
+        return $language;
+    }
+
+    /**
      * @param      $fileId
      * @param null $worksheetId
      *
-     * @throws \Exception
+     * @throws Exception
      */
     public static function importFromWorksheet($fileId, $worksheetId = null)
     {
@@ -525,6 +447,12 @@ class Import extends IdbImport
 
                 $clientModel = IdbBankClientBusiness::model($businessId);
                 foreach ($chunkedMap as $k => $chunk) {
+                    foreach ($chunk as &$type) {
+                        foreach ($type as &$typeValue) {
+                            $typeValue = trim($typeValue);
+                        }
+                    }
+
                     $response = $clientModel->putMultiple(array_values($chunk));
                     var_dump($response);
                     if ($response != 457) {
@@ -591,6 +519,88 @@ class Import extends IdbImport
                 }
             } catch (Exception $e) {
                 print_r($e->getFile() . ':' . $e->getLine() . ':' . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * @param        $file
+     * @param array $metadata
+     * @param        $businessUserId
+     * @param string $delimiter
+     * @param string $enclosure
+     * @param string $escape
+     *
+     * @return array
+     */
+    protected static function prepareMap(
+        $file,
+        array $metadata,
+        $businessUserId,
+        $delimiter = ";",
+        $enclosure = '"',
+        $escape = "\\"
+    )
+    {
+        $file = fopen($file, "r");
+        if (false === $file) {
+            return [];
+        }
+
+        $map = [];
+        $start = microtime(true);
+
+        $headers = fgets($file); //pomijamy headers
+        while (($row = fgets($file)) !== false) {
+            $row = str_getcsv($row, $delimiter, $enclosure, $escape);
+            $row = str_replace($escape . $enclosure, $enclosure, $row);
+            $tmp = [];
+
+            foreach ($metadata['headerMapping'] as $value) {
+                $tmp[$value['uuid']] = $row[$value['index']];
+            }
+
+            array_push($map, $tmp);
+        }
+        $end = microtime(true) - $start;
+        print_r("Map ready in $end seconds.\n");
+        fclose($file);
+
+        return $map;
+    }
+
+    /**
+     * @param $import
+     *
+     * @return bool
+     */
+    private static function setBothValidFromAttributes($import)
+    {
+        $importAttributes = $import->import_attributes;
+        if (!empty($importAttributes)) {
+            $importAttributes = json_decode($importAttributes, true);
+            if (!empty($importAttributes['valid_both'])) {
+                return $importAttributes['valid_both'];
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param $import
+     *
+     * @return string|null
+     */
+    private static function setPhoneCodeFromAttributes($import)
+    {
+        $importAttributes = $import->import_attributes;
+        if (!empty($importAttributes)) {
+            $importAttributes = json_decode($importAttributes, true);
+            if (!empty($importAttributes['phone_code']) && $importAttributes['phone_code'] !== '0') {
+                return $importAttributes['phone_code'];
+            } else {
+                return null;
             }
         }
     }
